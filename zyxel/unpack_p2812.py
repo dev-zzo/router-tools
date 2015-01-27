@@ -101,24 +101,28 @@ while True:
         break
 
     # This is BS. Need to figure out a better way, but ATM there's nothing.
-    if page[:5] == '<?xml':
+    if page[:5] == '<?xml' or page[3:8] == '<?xml':
         imgfp.seek(-geometry['page_size'], os.SEEK_CUR)
         break
 
     header = yaffs2_obj_unpack(page[:0x200])
     headers.append(header)
-    #print "type: %d name: '%s' parent: %x" % (header['type'], header['name'], header['parent_obj_id'])
+    print "type: %d name: '%s' parent: %x" % (header['type'], header['name'], header['parent_obj_id'])
     if header['name'] == '':
         print "(dummy entry)"
         continue
 
     path_chunks = []
     current_id = 0x100 + len(headers) - 1
-    while current_id != YAFFS_OBJECTID_ROOT:
-        hh = headers[current_id - 0x100]
-        path_chunks.append(hh['name'])
-        current_id = hh['parent_obj_id']
-    obj_path = os.path.join(*reversed(path_chunks))
+    try:
+        while current_id != YAFFS_OBJECTID_ROOT:
+            hh = headers[current_id - 0x100]
+            path_chunks.append(hh['name'])
+            current_id = hh['parent_obj_id']
+        obj_path = os.path.join(*reversed(path_chunks))
+    except IndexError:
+        print "Invalid current_id of %x" % (current_id)
+        break
 
     if header['type'] == YAFFS_OBJECT_TYPE_FILE:
         print "%s (%d bytes)" % (obj_path, header['file_size_low'])
