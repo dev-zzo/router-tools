@@ -212,11 +212,19 @@ def do_unpack(ras_path):
             #print("-> No data in image, dropping")
             continue
         fp.seek(offset)
-        out_name = "%s.%s" % (ras_path, mme.name.strip(" \0"))
-        #print("-> Writing to %s" % out_name)
+        data_length = mme.length
+        out_name = "%s.%s" % (ras_path, mme.name)
+        if mme.name in ('HTPCode', 'RasCode'):
+            sh = RomIoHeader(fp.read(0x30))
+            if sh.signature == RomIoHeader.SIGNATURE:
+                data_length = sh.comp_size
+                out_name = "%s.%s.7z" % (ras_path, mme.name)
+                fp.seek(3, 1)
+            else:
+                fp.seek(offset)
         out_fp = open(out_name, 'wb')
-        data = fp.read(mme.length)
-        if len(data) != mme.length:
+        data = fp.read(data_length)
+        if len(data) != data_length:
             print("-> NOTE: not all data is in the image")
         out_fp.write(data)
         out_fp.close()
