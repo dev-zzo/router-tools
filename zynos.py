@@ -90,6 +90,27 @@ class MemoryMapEntry(struct.Struct):
     def unpack(self, source):
         self.type1, self.name, self.address, self.length, self.type2 = struct.Struct.unpack(self, source)
 #
+class CheckSum(object):
+    def __init__(self):
+        self.sum = 0
+        self.__last = None
+    def update(self, data):
+        if self.__last is not None:
+            data = self.__last + data
+            self.__last = None
+        offset = 0
+        l = (len(data) // 2) * 2
+        s = struct.Struct('>H')
+        while offset < l:
+            self.sum += s.unpack_from(data, offset)
+            if self.sum > 0xFFFF:
+                self.sum = (1 + self.sum) & 0xFFFF
+            offset += 2
+        if offset < len(data):
+            self.__last = data[-1]
+    def get(self):
+        self.update("\0")
+        return self.sum
 
 fp = open(sys.argv[1], 'rb')
 
