@@ -66,7 +66,7 @@ class MemoryMapHeader(struct.Struct):
             self.user_end = 0L
             self.checksum = 0
     def __str__(self):
-        return "%d entries (USER: %08X..%08X)" % (self.count, self.user_start, self.user_end)
+        return "%d entries (USER: %08X..%08X), checksum %04X" % (self.count, self.user_start, self.user_end, self.checksum)
     def pack(self):
         return struct.Struct.pack(self, self.count, self.user_start, self.user_end, self.checksum)
     def unpack(self, source):
@@ -100,9 +100,8 @@ class CheckSum(object):
             self.__last = None
         offset = 0
         l = (len(data) // 2) * 2
-        s = struct.Struct('>H')
         while offset < l:
-            self.sum += s.unpack_from(data, offset)
+            self.sum += (ord(data[offset]) << 8) + ord(data[offset + 1])
             if self.sum > 0xFFFF:
                 self.sum = (1 + self.sum) & 0xFFFF
             offset += 2
@@ -114,22 +113,39 @@ class CheckSum(object):
 
 fp = open(sys.argv[1], 'rb')
 
+def find_memory_map(fp, mmap_addr):
+    fp.seek(0, 2)
+    size = fp.tell()
+    offset = 0x100
+    mmh = MemoryMapHeader()
+    while offset < size - 0x100:
+        fp.seek(offset)
+        mmh.unpack(fp.read(24))
+        calculated_addr = mmh.user_start - (mmh.count + 1) * 24
+        if calculated_addr == mmap_addr:
+            mmt_length = mmh.user_end - mmap_addr - 24
+            if 0 <= mmt_length < size - offset:
+                csum = CheckSum()
+                csum.update(fp.read(mmt_length))
+                if csum.get() == mmh.checksum:
+                    return offset
+        offset += 0x100
+    return None
+
 print("Reading the RAS image ROMIO header")
 romio_header = RomIoHeader(fp.read(48))
 print("Header dump:")
 print(str(romio_header))
 
 print("Searching for the memory map table")
-offset = 0x100
-while True:
-    fp.seek(offset)
-    mmh = MemoryMapHeader(fp.read(24))
-    if mmh.user_start - (mmh.count + 1) * 24 == romio_header.mmap_addr:
-        print("Memory map table found at offset %X in the file" % offset)
-        break
-    offset += 0x100
+mmh_offset = find_memory_map(fp, romio_header.mmap_addr)
+print("Memory map table found at offset %X in the file" % mmh_offset)
+fp.seek(mmh_offset)
+mmh = MemoryMapHeader(fp.read(24))
+print(str(mmh))
 mmt = []
 while len(mmt) < mmh.count:
     e = MemoryMapEntry(fp.read(24))
     mmt.append(e)
     print str(e)
+#
