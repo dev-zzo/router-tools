@@ -4,6 +4,11 @@ A tool for ZyNOS firmware update binaries.
 References:
 https://dev.openwrt.org/browser/trunk/tools/firmware-utils/src/zynos.h
 
+A few notes on unpacked data.
+
+Sections that start with ROMIO header (the one with SIG) and compressed with LZMA
+start with 3 byte offset after the header. No idea what was supposed to go there.
+
 """
 
 import sys
@@ -101,7 +106,7 @@ class MemoryMapEntry(struct.Struct):
             type_name = MemoryMapEntry.Type1Names[self.type1]
         except KeyError:
             type_name = str(self.type1)
-        return "%08X %08X %s (%s, %d)" % (self.address, self.length, self.name, type_name, self.type2)
+        return "%08X %08X '%-8s' (%s, %d)" % (self.address, self.length, self.name, type_name, self.type2)
     def pack(self):
         return struct.Struct.pack(self, self.type1, self.name, self.address, self.length, self.type2)
     def unpack(self, source):
@@ -196,18 +201,19 @@ def do_unpack(ras_path):
         print("No BootExt section -- can't figure out where the image is based")
         return
 
+    print("Unpacking sections:")
     for mme in mmt:
         print str(mme)
         if mme.type1 & 0x80:
-            print("-> RAM section, dropping")
+            #print("-> RAM section, dropping")
             continue
         offset = mme.address - bootext_base
         if offset < 0:
-            print("-> No data in image, dropping")
+            #print("-> No data in image, dropping")
             continue
         fp.seek(offset)
         out_name = "%s.%s" % (ras_path, mme.name.strip(" \0"))
-        print("-> Writing to %s" % out_name)
+        #print("-> Writing to %s" % out_name)
         out_fp = open(out_name, 'wb')
         data = fp.read(mme.length)
         if len(data) != mme.length:
