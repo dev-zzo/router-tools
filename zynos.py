@@ -10,13 +10,15 @@ import sys
 import struct
 
 class RomIoHeader(struct.Struct):
+    SIGNATURE = 'SIG'
+
     def __init__(self, source=None):
         struct.Struct.__init__(self, '>Ixx3sBIIBxHH15sIxxxxx')
         if source is not None:
             self.unpack(source)
         else:
             self.load_addr = 0L
-            self.signature = 'SIG'
+            self.signature = RomIoHeader.SIGNATURE
             self.type = 0
             self.orig_size = 0
             self.orig_checksum = 0
@@ -73,6 +75,17 @@ class MemoryMapHeader(struct.Struct):
         self.count, self.user_start, self.user_end, self.checksum = struct.Struct.unpack(self, source)
 #
 class MemoryMapEntry(struct.Struct):
+    Type1Names = {
+        0x01: 'ROMIMG',
+        0x02: 'ROMBOOT',
+        0x03: 'BOOTEXT',
+        0x04: 'ROMBIN',
+        0x05: 'ROMDIR',
+        0x07: 'ROMMAP',
+        0x81: 'RAMCODE',
+        0x82: 'RAMBOOT',
+    }
+
     def __init__(self, source=None):
         struct.Struct.__init__(self, '>B8sxIxxII')
         if source is not None:
@@ -84,7 +97,11 @@ class MemoryMapEntry(struct.Struct):
             self.address = 0L
             self.length = 0L
     def __str__(self):
-        return "%08X %08X %s (%d, %d)" % (self.address, self.length, self.name, self.type1, self.type2)
+        try:
+            type_name = MemoryMapEntry.Type1Names[self.type1]
+        except KeyError:
+            type_name = str(self.type1)
+        return "%08X %08X %s (%s, %d)" % (self.address, self.length, self.name, type_name, self.type2)
     def pack(self):
         return struct.Struct.pack(self, self.type1, self.name, self.address, self.length, self.type2)
     def unpack(self, source):
@@ -111,7 +128,6 @@ class CheckSum(object):
         self.update("\0")
         return self.sum
 
-fp = open(sys.argv[1], 'rb')
 
 def find_memory_map(fp, mmap_addr):
     fp.seek(0, 2)
@@ -120,10 +136,10 @@ def find_memory_map(fp, mmap_addr):
     mmh = MemoryMapHeader()
     while offset < size - 0x100:
         fp.seek(offset)
-        mmh.unpack(fp.read(24))
-        calculated_addr = mmh.user_start - (mmh.count + 1) * 24
+        mmh.unpack(fp.read(0x18))
+        calculated_addr = mmh.user_start - (mmh.count + 1) * 0x18
         if calculated_addr == mmap_addr:
-            mmt_length = mmh.user_end - mmap_addr - 24
+            mmt_length = mmh.user_end - mmap_addr - 0x18
             if 0 <= mmt_length < size - offset:
                 csum = CheckSum()
                 csum.update(fp.read(mmt_length))
@@ -131,21 +147,76 @@ def find_memory_map(fp, mmap_addr):
                     return offset
         offset += 0x100
     return None
-
-print("Reading the RAS image ROMIO header")
-romio_header = RomIoHeader(fp.read(48))
-print("Header dump:")
-print(str(romio_header))
-
-print("Searching for the memory map table")
-mmh_offset = find_memory_map(fp, romio_header.mmap_addr)
-print("Memory map table found at offset %X in the file" % mmh_offset)
-fp.seek(mmh_offset)
-mmh = MemoryMapHeader(fp.read(24))
-print(str(mmh))
-mmt = []
-while len(mmt) < mmh.count:
-    e = MemoryMapEntry(fp.read(24))
-    mmt.append(e)
-    print str(e)
 #
+def read_memory_map(fp, mmap_addr):
+    mmh_offset = find_memory_map(fp, mmap_addr)
+    if mmh_offset is None:
+        return None
+    fp.seek(mmh_offset)
+    mmh = MemoryMapHeader(fp.read(0x18))
+    mmt = []
+    while len(mmt) < mmh.count:
+        e = MemoryMapEntry(fp.read(0x18))
+        e.name = e.name.rstrip("\0")
+        mmt.append(e)
+    return mmt
+#
+def do_info(ras_path):
+    fp = open(ras_path, 'rb')
+
+    print("Reading the RAS image ROMIO header.")
+    romio_header = RomIoHeader(fp.read(0x30))
+    if romio_header.signature != RomIoHeader.SIGNATURE:
+        print("Incorrect header signature!")
+        return
+    print("Header dump:")
+    print(str(romio_header))
+    print('')
+
+    mmt = read_memory_map(fp, romio_header.mmap_addr)
+    if mmt is None:
+        return
+    print("Memory map:")
+    for mme in mmt:
+        print str(mme)
+#
+def do_unpack(ras_path):
+    fp = open(ras_path, 'rb')
+    romio_header = RomIoHeader(fp.read(0x30))
+    mmt = read_memory_map(fp, romio_header.mmap_addr)
+    if mmt is None:
+        return
+
+    bootext_base = None
+    for mme in mmt:
+        if mme.type1 == 1 and mme.name == 'BootExt':
+            bootext_base = mme.address - 0x30
+            break
+    if bootext_base is None:
+        print("No BootExt section -- can't figure out where the image is based")
+        return
+
+    for mme in mmt:
+        print str(mme)
+        if mme.type1 & 0x80:
+            print("-> RAM section, dropping")
+            continue
+        offset = mme.address - bootext_base
+        if offset < 0:
+            print("-> No data in image, dropping")
+            continue
+        fp.seek(offset)
+        out_name = "%s.%s" % (ras_path, mme.name.strip(" \0"))
+        print("-> Writing to %s" % out_name)
+        out_fp = open(out_name, 'wb')
+        data = fp.read(mme.length)
+        if len(data) != mme.length:
+            print("-> NOTE: not all data is in the image")
+        out_fp.write(data)
+        out_fp.close()
+#
+
+if __name__ == '__main__':
+    print("ZyNOS firmware tool by dev_zzo, version 0")
+    print('')
+    do_unpack(sys.argv[1])
