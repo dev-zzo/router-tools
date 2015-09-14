@@ -3,14 +3,52 @@ A tool for ZyNOS firmware update binaries.
 
 References:
 https://dev.openwrt.org/browser/trunk/tools/firmware-utils/src/zynos.h
+http://www.ixo.de/info/zyxel_uclinux/
 
-A few notes on unpacked data.
+# What is actually in the firmware?
 
-Sections that start with ROMIO header (the one with SIG) and compressed with LZMA
-start with 3 byte offset after the header. No idea what was supposed to go there.
+Every device contains an initial program loader called BootBase. The goal
+of this software piece is to locate the next stage, load it, and pass control.
+
+The next stage would typically be a second-stage loader called BootExt or
+BootExtension; this one also provides for minimal debugging capabilities
+via serial console (where physically available). It also allows to load and
+execute the next stage.
+
+The next stage (of those that are stored on the device) is either RAS or HTP.
+RAS (acronym?) would be the main firmware, the one you typically would want to run.
+HTP is a Hardware Test Program, performing various tests depending on the board.
+
+Now, how boot code knows where all the different parts are located?
+
+There is a certain, very important structure called "memory map table",
+shorted to "memMapTab" and available via the ATMP command of boot extension.
+This table stores location of every object there is in memory, both ROM and RAM.
+So dumping that one would be VERY useful in reverse engineering efforts.
+Moreover, it allows to correctly tie the image to the memory location and
+correctly extract all the objects.
+
+# What is actually ZyNOS?
+
+Nobody knows! It is being told that ZyNOS is ZyXEL Network Operating System,
+but from I could tell by inspecting the images, at least some of them are based
+off ThreadX.
+
+Specifically, the following identifying strings were found:
+- ThreadX R3900/Green Hills Version G3.0f.3.0b
+    D-LINK DSL-2640R, DSL-2641R, DSL-2740R
+    TP-LINK TD-8816 V1 through V7
+    ZTE ZXV10 W300
+    ZyXEL P-2602HWL-D3A
+    ZyXEL P-2602HW-61
+    ZyXEL P-660HN-T3A, P-660HW-D1, P-660HW-T1
+- ThreadX MIPS32_M14K/GNU Version G5.5.5.0 SN: 3461-183-0501
+    TP-LINK TD-8816 V8
 
 """
 
+import argparse
+import os.path
 import sys
 import struct
 
@@ -25,9 +63,9 @@ class RomIoHeader(struct.Struct):
             self.load_addr = 0L
             self.signature = RomIoHeader.SIGNATURE
             self.type = 0
-            self.orig_size = 0
+            self.orig_length = 0
             self.orig_checksum = 0
-            self.comp_size = 0
+            self.comp_length = 0
             self.comp_checksum = 0
             self.flags = 0
             self.version = "\0" * 15
@@ -39,14 +77,14 @@ class RomIoHeader(struct.Struct):
         lines.append("  Memmap address: %08X" % self.mmap_addr)
         lines.append("  Flags: %02X" % self.flags)
         if self.flags & 0x40:
-            lines.append("  Original size: %08X; checksum: %04X" % (self.orig_size, self.orig_checksum))
+            lines.append("  Original size: %08X; checksum: %04X" % (self.orig_length, self.orig_checksum))
         else:
-            lines.append("  Original size: %08X" % self.orig_size)
+            lines.append("  Original size: %08X" % self.orig_length)
         if self.flags & 0x80:
             if self.flags & 0x20:
-                lines.append("  Compressed size: %08X; checksum: %04X" % (self.comp_size, self.comp_checksum))
+                lines.append("  Compressed size: %08X; checksum: %04X" % (self.comp_length, self.comp_checksum))
             else:
-                lines.append("  Compressed size: %08X" % self.comp_size)
+                lines.append("  Compressed size: %08X" % self.comp_length)
         return "\n".join(lines)
     def pack(self):
         return struct.Struct.pack(
@@ -54,13 +92,15 @@ class RomIoHeader(struct.Struct):
             self.load_addr,
             self.signature,
             self.type,
-            self.orig_size, self.comp_size,
+            self.orig_length, self.comp_length,
             self.flags,
             self.orig_checksum, self.comp_checksum,
             self.version,
             self.mmap_addr)
     def unpack(self, source):
-        self.load_addr, self.signature, self.type, self.orig_size, self.comp_size, self.flags, self.orig_checksum, self.comp_checksum, self.version, self.mmap_addr = struct.Struct.unpack(self, source)
+        self.load_addr, self.signature, self.type, self.orig_length, self.comp_length, self.flags, self.orig_checksum, self.comp_checksum, self.version, self.mmap_addr = struct.Struct.unpack(self, source)
+        if self.signature != RomIoHeader.SIGNATURE:
+            raise ValueError('signature mismatch')
 #
 class MemoryMapHeader(struct.Struct):
     def __init__(self, source=None):
@@ -86,6 +126,7 @@ class MemoryMapEntry(struct.Struct):
         0x03: 'BOOTEXT',
         0x04: 'ROMBIN',
         0x05: 'ROMDIR',
+        0x06: 'ROM68K',
         0x07: 'ROMMAP',
         0x81: 'RAMCODE',
         0x82: 'RAMBOOT',
@@ -106,34 +147,27 @@ class MemoryMapEntry(struct.Struct):
             type_name = MemoryMapEntry.Type1Names[self.type1]
         except KeyError:
             type_name = str(self.type1)
-        return "%08X %08X '%-8s' (%s, %d)" % (self.address, self.length, self.name, type_name, self.type2)
+        return "'%-8s' at %08X, size %08X (%s, %d)" % (self.name, self.address, self.length, type_name, self.type2)
     def pack(self):
         return struct.Struct.pack(self, self.type1, self.name, self.address, self.length, self.type2)
     def unpack(self, source):
         self.type1, self.name, self.address, self.length, self.type2 = struct.Struct.unpack(self, source)
 #
-class CheckSum(object):
-    def __init__(self):
-        self.sum = 0
-        self.__last = None
-    def update(self, data):
-        if self.__last is not None:
-            data = self.__last + data
-            self.__last = None
-        offset = 0
-        l = (len(data) // 2) * 2
-        while offset < l:
-            self.sum += (ord(data[offset]) << 8) + ord(data[offset + 1])
-            if self.sum > 0xFFFF:
-                self.sum = (1 + self.sum) & 0xFFFF
-            offset += 2
-        if offset < len(data):
-            self.__last = data[-1]
-    def get(self):
-        self.update("\0")
-        return self.sum
-
-
+def checksum(data):
+    sum = 0
+    offset = 0
+    limit = (len(data) >> 1) << 1
+    while offset < limit:
+        sum += (ord(data[offset]) << 8) + ord(data[offset + 1])
+        if sum > 0xFFFF:
+            sum = (1 + sum) & 0xFFFF
+        offset += 2
+    if offset != len(data):
+        sum += ord(data[-1]) << 8
+        if sum > 0xFFFF:
+            sum = (1 + sum) & 0xFFFF
+    return sum
+#
 def find_memory_map(fp, mmap_addr):
     fp.seek(0, 2)
     size = fp.tell()
@@ -146,17 +180,38 @@ def find_memory_map(fp, mmap_addr):
         if calculated_addr == mmap_addr:
             mmt_length = mmh.user_end - mmap_addr - 0x18
             if 0 <= mmt_length < size - offset:
-                csum = CheckSum()
-                csum.update(fp.read(mmt_length))
-                if csum.get() == mmh.checksum:
+                if checksum(fp.read(mmt_length)) == mmh.checksum:
                     return offset
         offset += 0x100
     return None
 #
-def read_memory_map(fp, mmap_addr):
-    mmh_offset = find_memory_map(fp, mmap_addr)
+def do_unpack(args):
+    "Process the input image"
+
+    print("Processing the RAS image from '%s'." % args.input_file)
+    fp = open(args.input_file, 'rb')
+    fp.seek(0, 2)
+    image_size = fp.tell()
+    fp.seek(0, 0)
+
+    romio_header = RomIoHeader(fp.read(0x30))
+    print("ZyNOS ROMIO header:")
+    print(str(romio_header))
+    
+    if romio_header.flags & 0x40:
+        print("Verifying image checksum...")
+        this_checksum = checksum(fp.read(romio_header.orig_length))
+        if this_checksum != romio_header.orig_checksum:
+            print("Checksum verification failed: expected %04X, calculated %04X" % (romio_header.orig_checksum, this_checksum))
+            return
+    print('')
+
+    print("Searching for memory map table...")
+    mmh_offset = find_memory_map(fp, romio_header.mmap_addr)
     if mmh_offset is None:
-        return None
+        print("Memory map table not found!")
+        return
+    print("Memory map table found at offset %08X in the image." % mmh_offset)
     fp.seek(mmh_offset)
     mmh = MemoryMapHeader(fp.read(0x18))
     mmt = []
@@ -164,73 +219,109 @@ def read_memory_map(fp, mmap_addr):
         e = MemoryMapEntry(fp.read(0x18))
         e.name = e.name.rstrip("\0")
         mmt.append(e)
-    return mmt
-#
-def do_info(ras_path):
-    fp = open(ras_path, 'rb')
-
-    print("Reading the RAS image ROMIO header.")
-    romio_header = RomIoHeader(fp.read(0x30))
-    if romio_header.signature != RomIoHeader.SIGNATURE:
-        print("Incorrect header signature!")
-        return
-    print("Header dump:")
-    print(str(romio_header))
-    print('')
-
-    mmt = read_memory_map(fp, romio_header.mmap_addr)
-    if mmt is None:
-        return
-    print("Memory map:")
-    for mme in mmt:
-        print str(mme)
-#
-def do_unpack(ras_path):
-    fp = open(ras_path, 'rb')
-    romio_header = RomIoHeader(fp.read(0x30))
-    mmt = read_memory_map(fp, romio_header.mmap_addr)
     if mmt is None:
         return
 
-    bootext_base = None
+    print("Figuring out the address of the BootExt object...")
+    image_base = None
     for mme in mmt:
         if mme.type1 == 1 and mme.name == 'BootExt':
-            bootext_base = mme.address - 0x30
+            image_base = mme.address - 0x30
             break
-    if bootext_base is None:
+    if image_base is None:
         print("No BootExt section -- can't figure out where the image is based")
         return
+    print("The image is based at %08X in the address space." % image_base)
 
-    print("Unpacking sections:")
+    if args.prefix is None:
+        out_prefix = os.path.splitext(os.path.basename(args.input_file))[0]
+    else:
+        out_prefix = args.prefix
+
     for mme in mmt:
-        print str(mme)
+        print('')
+        print("Object: " + str(mme))
+
         if mme.type1 & 0x80:
-            #print("-> RAM section, dropping")
+            print("-> RAM object, nothing to write out.")
             continue
-        offset = mme.address - bootext_base
-        if offset < 0:
-            #print("-> No data in image, dropping")
+
+        offset = mme.address - image_base
+        if offset < 0 or offset >= image_size:
+            print("-> No data in the image for this object, skipped.")
             continue
-        fp.seek(offset)
-        data_length = mme.length
-        out_name = "%s.%s" % (ras_path, mme.name)
-        if mme.name in ('HTPCode', 'RasCode'):
+
+        out_name = out_prefix + '_' + mme.name
+
+        try:
+            fp.seek(offset)
             sh = RomIoHeader(fp.read(0x30))
-            if sh.signature == RomIoHeader.SIGNATURE:
-                data_length = sh.comp_size
-                out_name = "%s.%s.7z" % (ras_path, mme.name)
-                fp.seek(3, 1)
+            print("-> ZyNOS ROMIO header found, version string: %s." % sh.version.strip("\0"))
+            #print(str(sh))
+            if sh.flags & 0x80:
+                print("-> Data is compressed, compressed/original length: %08X/%08X." % (sh.comp_length, sh.orig_length))
+                data_length = sh.comp_length
+                # TODO: Figure out why +3 is required.
+                tag = fp.read(3)
+                fp.seek(-3, 1)
+                if tag == "\0\0\0":
+                    out_name += '.7z'
+                    print("-> Compression method: LZMA?")
+                    fp.seek(3, 1)
+                elif tag == "]\0\0":
+                    out_name += '.7z'
+                    print("-> Compression method: LZMA")
+                elif tag == "BZh":
+                    out_name += '.bz2'
+                    print("-> Compression method: bzip2")
+                else:
+                    print("-> Compression method: UNKNOWN")
             else:
-                fp.seek(offset)
-        out_fp = open(out_name, 'wb')
+                print("-> Data is not compressed, length: %08X." % sh.orig_length)
+                data_length = sh.orig_length
+        except ValueError:
+            fp.seek(offset)
+            data_length = mme.length
+            print("-> Raw data.")
+
         data = fp.read(data_length)
         if len(data) != data_length:
-            print("-> NOTE: not all data is in the image")
-        out_fp.write(data)
-        out_fp.close()
+            print("-> NOTE: not all data is in the image.")
+        if not args.dry_run:
+            print("-> Writing %d bytes to '%s'." % (data_length, out_name))
+            out_fp = open(out_name, 'wb')
+            out_fp.write(data)
+            out_fp.close()
+        else:
+            print("-> Would write %d bytes to '%s'." % (data_length, out_name))
 #
+def do_pack(args):
+    print("Currently not implemented, sorry.")
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers()
+    
+    parser_unpack = subparsers.add_parser('unpack', help='unpack the firmware')
+    parser_unpack.add_argument('input_file')
+    parser_unpack.add_argument('--prefix',
+        help="prefix for unpacked files (default: <basename>_)",
+        default=None)
+    parser_unpack.add_argument('--dry-run',
+        help="don't actually do anything, just print",
+        action='store_true',
+        dest='dry_run',
+        default=False)
+    parser_unpack.set_defaults(do=do_unpack)
+
+    parser_pack = subparsers.add_parser('pack', help='pack the firmware')
+    parser_pack.set_defaults(do=do_pack)
+    
     print("ZyNOS firmware tool by dev_zzo, version 0")
     print('')
-    do_unpack(sys.argv[1])
+
+    args = parser.parse_args()
+    args.do(args)
+
+    print('')
+    print("Done.")
