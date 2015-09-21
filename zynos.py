@@ -36,6 +36,7 @@ off ThreadX.
 
 Specifically, the following identifying strings were found:
 - ThreadX R3900/Green Hills Version G3.0f.3.0b
+    Billion BiPAC 5100, 5102, 5102S, 5200/SRC/SRD, 5210SRF
     D-LINK DSL-2640R, DSL-2641R, DSL-2740R
     TP-LINK TD-8816 V1 through V7
     ZTE ZXV10 W300
