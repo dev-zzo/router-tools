@@ -310,25 +310,27 @@ def do_unpack(args):
                 print("-> Data is compressed, compressed/original length: %08X/%08X." % (sh.comp_length, sh.orig_length))
                 data_length = sh.comp_length
                 tag = fp.read(3)
-                fp.seek(-3, 1)
                 if tag == "\0\0\0":
-                    fp.seek(3, 1)
                     # Some firmware requires 3 zero bytes before actual LZMA data...
                     tag = fp.read(3)
                     if tag == "]\0\0":
                         print("-> Compression method: LZMA (3 zeros prepended)")
                         out_name += '.7z'
+                        fp.seek(-3, 1)
                     else:
                         print("-> Compression method: UNKNOWN")
                         fp.seek(-6, 1)
                 elif tag == "]\0\0":
                     print("-> Compression method: LZMA")
                     out_name += '.7z'
+                    fp.seek(-3, 1)
                 elif tag == "BZh":
                     print("-> Compression method: bzip2")
                     out_name += '.bz2'
+                    fp.seek(-3, 1)
                 else:
                     print("-> Compression method: UNKNOWN")
+                    fp.seek(-3, 1)
             else:
                 print("-> Data is not compressed, length: %08X." % sh.orig_length)
                 data_length = sh.orig_length
