@@ -12,21 +12,41 @@ of this software piece is to locate the next stage, load it, and pass control.
 
 The next stage would typically be a second-stage loader called BootExt or
 BootExtension; this one also provides for minimal debugging capabilities
-via serial console (where physically available). It also allows to load and
-execute the next stage.
+via serial console (where physically available) and loads &  executes the next
+stage. Note BootExt is located in the firmware image and thus can be altered at will.
 
 The next stage (of those that are stored on the device) is either RAS or HTP.
 RAS (acronym?) would be the main firmware, the one you typically would want to run.
 HTP is a Hardware Test Program, performing various tests depending on the board.
 
-Now, how boot code knows where all the different parts are located?
+# How boot code knows where all the different parts are located?
 
 There is a certain, very important structure called "memory map table",
 shorted to "memMapTab" and available via the ATMP command of boot extension.
 This table stores location of every object there is in memory, both ROM and RAM.
-So dumping that one would be VERY useful in reverse engineering efforts.
-Moreover, it allows to correctly tie the image to the memory location and
-correctly extract all the objects.
+So dumping that one is VERY useful in reverse engineering efforts.
+
+The table is identified as the 'MemMapT' object in the table itself.
+
+Typical contents of the table (excerpt from the tool output):
+
+Object: 'BootExt ' at 80008000, size 00018000 (RAMBOOT, 0)
+Object: 'HTPCode ' at 80020000, size 000E0000 (RAMCODE, 0)
+Object: 'RasCode ' at 80020000, size 00340000 (RAMCODE, 0)
+Object: 'BootBas ' at BFC00000, size 00004000 (ROMIMG, 0)
+Object: 'DbgArea ' at BFC04000, size 00002000 (ROMIMG, 1)
+Object: 'RomDir2 ' at BFC06000, size 00002000 (ROMDIR, 2)
+Object: 'BootExt ' at BFC08030, size 00013FD0 (ROMIMG, 3)
+Object: 'MemMapT ' at BFC1C000, size 00000C00 (ROMMAP, 5)
+Object: 'HTPCode ' at BFC1CC00, size 00008000 (ROMBIN, 4)
+Object: 'termcap ' at BFC24C00, size 00000400 (ROMIMG, 6)
+Object: 'RomDefa ' at BFC25000, size 00002000 (ROMIMG, 7)
+Object: 'LedDefi ' at BFC27000, size 00000400 (ROMIMG, 8)
+Object: 'LogoImg ' at BFC27400, size 00001000 (ROMIMG, 9)
+Object: 'LogoImg2' at BFC28400, size 00001000 (ROMIMG, 16)
+Object: 'StrImag ' at BFC29400, size 00002000 (ROMIMG, 17)
+Object: 'fdata   ' at BFC2B400, size 00002800 (ROMBIN, 18)
+Object: 'RasCode ' at BFC2DC00, size 0004A400 (ROMBIN, 19)
 
 # What is actually ZyNOS?
 
@@ -169,23 +189,6 @@ def checksum(data):
             sum = (1 + sum) & 0xFFFF
     return sum
 #
-def find_memory_map(fp, mmap_addr):
-    fp.seek(0, 2)
-    size = fp.tell()
-    offset = 0x100
-    mmh = MemoryMapHeader()
-    while offset < size - 0x100:
-        fp.seek(offset)
-        mmh.unpack(fp.read(0x18))
-        calculated_addr = mmh.user_start - (mmh.count + 1) * 0x18
-        if calculated_addr == mmap_addr:
-            mmt_length = mmh.user_end - mmap_addr - 0x18
-            if 0 <= mmt_length < size - offset:
-                if checksum(fp.read(mmt_length)) == mmh.checksum:
-                    return offset
-        offset += 0x100
-    return None
-#
 def do_unpack(args):
     "Process the input image"
 
@@ -198,7 +201,7 @@ def do_unpack(args):
     romio_header = RomIoHeader(fp.read(0x30))
     print("ZyNOS ROMIO header:")
     print(str(romio_header))
-    
+
     if romio_header.flags & 0x40:
         print("Verifying image checksum...")
         this_checksum = checksum(fp.read(romio_header.orig_length))
@@ -207,48 +210,82 @@ def do_unpack(args):
             return
     print('')
 
-    print("Searching for memory map table...")
-    mmh_offset = find_memory_map(fp, romio_header.mmap_addr)
-    if mmh_offset is None:
-        print("Memory map table not found!")
-        return
-    print("Memory map table found at offset %08X in the image." % mmh_offset)
-    fp.seek(mmh_offset)
-    mmh = MemoryMapHeader(fp.read(0x18))
-    mmt = []
-    while len(mmt) < mmh.count:
-        e = MemoryMapEntry(fp.read(0x18))
-        e.name = e.name.rstrip("\0")
-        mmt.append(e)
-
-    print("Figuring out the address of the BootExt object...")
-    image_base = None
-    for mme in mmt:
-        if mme.type1 == 1 and mme.name == 'BootExt':
-            image_base = mme.address - 0x30
-            break
-    if image_base is None:
-        print("No BootExt section -- can't figure out where the image is based")
-        return
-    print("The image is based at %08X in the address space." % image_base)
-
     if args.prefix is None:
         out_prefix = os.path.basename(args.input_file) + '.unpacked'
     else:
         out_prefix = args.prefix
     print("Using '%s' as output path prefix." % out_prefix)
-    if os.path.exists(out_prefix):
-        if not os.path.isdir(out_prefix):
-            print("Output path already exists and is not a directory; can't write there.")
-            return
+
+    if not args.dry_run:
+        if os.path.exists(out_prefix):
+            if not os.path.isdir(out_prefix):
+                print("Output path already exists and is not a directory; can't write there.")
+                return
+            else:
+                print("Output path already exists; writing there.")
         else:
-            print("Output path already exists; writing there.")
+            try:
+                os.mkdir(out_prefix)
+            except OSError:
+                print("Failed to create output path.")
+                return
+
+    print("Searching for memory map table...")
+    fp.seek(0, 2)
+    size = fp.tell()
+    mmh_offset = 0x100
+    mmh = MemoryMapHeader()
+    while mmh_offset < size - 0x100:
+        fp.seek(mmh_offset)
+        mmh.unpack(fp.read(0x18))
+        mmt_size = (mmh.count + 1) * 0x18
+        calculated_addr = mmh.user_start - mmt_size
+        if calculated_addr == romio_header.mmap_addr:
+            mmt_length = mmh.user_end - romio_header.mmap_addr - 0x18
+            if 0 <= mmt_length < size - mmh_offset:
+                if checksum(fp.read(mmt_length)) == mmh.checksum:
+                    print("Memory map table found at offset %08X in the image." % mmh_offset)
+                    break
+        mmh_offset += 0x100
     else:
-        try:
-            os.mkdir(out_prefix)
-        except OSError:
-            print("Failed to create output path.")
-            return
+        print("Memory map table not found!")
+        return
+
+    fp.seek(mmh_offset + 0x18)
+    mmt = []
+    while len(mmt) < mmh.count:
+        e = MemoryMapEntry(fp.read(0x18))
+        e.name = e.name.rstrip("\0")
+        mmt.append(e)
+    if not args.dry_run:
+        with open(out_prefix + '/.map', 'wt') as out:
+            out.write("[\n")
+            out.write("# Name, Address, Size, Type1, Type2\n")
+            for mme in mmt:
+                out.write("('%s', 0x%08XL, 0x%08XL, %d, %d),\n" % (mme.name, mme.address, mme.length, mme.type1, mme.type2))
+            out.write("]\n")
+    if romio_header.mmap_addr + mmt_size == mmh.user_start:
+        user = fp.read(mmh.user_end - mmh.user_start)
+        if not args.dry_run:
+            out_name = out_prefix + '/.user'
+            print("Writing %d bytes of $USER data to '%s'" % (len(user), out_name))
+            with open(out_name, 'wb') as out:
+                out.write(user)
+    else:
+        # Don't know how best to deal with this for now.
+        print("USER data is not located after memory map table.")
+
+    # To tie the image to a memory location, figure out where BootExt is located.
+    # The image base is then that address minus 0x30 for ROMIO header.
+    print("Figuring out the address of the BootExt object...")
+    for mme in mmt:
+        if mme.type1 == 1 and mme.name == 'BootExt':
+            image_base = mme.address - 0x30
+            print("The image is based at %08X in the address space." % image_base)
+            break
+    else:
+        print("No BootExt section -- can't figure out where the image is based")
+        return
 
     for mme in mmt:
         print('')
