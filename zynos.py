@@ -306,7 +306,6 @@ def do_unpack(args):
             fp.seek(offset)
             sh = RomIoHeader(fp.read(0x30))
             print("-> ZyNOS ROMIO header found, version string: %s." % sh.version.strip("\0"))
-            #print(str(sh))
             if sh.flags & 0x80:
                 print("-> Data is compressed, compressed/original length: %08X/%08X." % (sh.comp_length, sh.orig_length))
                 data_length = sh.comp_length
