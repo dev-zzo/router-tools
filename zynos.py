@@ -220,8 +220,6 @@ def do_unpack(args):
         e = MemoryMapEntry(fp.read(0x18))
         e.name = e.name.rstrip("\0")
         mmt.append(e)
-    if mmt is None:
-        return
 
     print("Figuring out the address of the BootExt object...")
     image_base = None
@@ -235,9 +233,22 @@ def do_unpack(args):
     print("The image is based at %08X in the address space." % image_base)
 
     if args.prefix is None:
-        out_prefix = os.path.splitext(os.path.basename(args.input_file))[0]
+        out_prefix = os.path.basename(args.input_file) + '.unpacked'
     else:
         out_prefix = args.prefix
+    print("Using '%s' as output path prefix." % out_prefix)
+    if os.path.exists(out_prefix):
+        if not os.path.isdir(out_prefix):
+            print("Output path already exists and is not a directory; can't write there.")
+            return
+        else:
+            print("Output path already exists; writing there.")
+    else:
+        try:
+            os.mkdir(out_prefix)
+        except OSError:
+            print("Failed to create output path.")
+            return
 
     for mme in mmt:
         print('')
@@ -252,7 +263,7 @@ def do_unpack(args):
             print("-> No data in the image for this object, skipped.")
             continue
 
-        out_name = out_prefix + '_' + mme.name
+        out_name = out_prefix + '/' + mme.name
 
         try:
             fp.seek(offset)
@@ -262,19 +273,24 @@ def do_unpack(args):
             if sh.flags & 0x80:
                 print("-> Data is compressed, compressed/original length: %08X/%08X." % (sh.comp_length, sh.orig_length))
                 data_length = sh.comp_length
-                # TODO: Figure out why +3 is required.
                 tag = fp.read(3)
                 fp.seek(-3, 1)
                 if tag == "\0\0\0":
-                    out_name += '.7z'
-                    print("-> Compression method: LZMA?")
                     fp.seek(3, 1)
+                    # Some firmware requires 3 zero bytes before actual LZMA data...
+                    tag = fp.read(3)
+                    if tag == "]\0\0":
+                        print("-> Compression method: LZMA (3 zeros prepended)")
+                        out_name += '.7z'
+                    else:
+                        print("-> Compression method: UNKNOWN")
+                        fp.seek(-6, 1)
                 elif tag == "]\0\0":
-                    out_name += '.7z'
                     print("-> Compression method: LZMA")
+                    out_name += '.7z'
                 elif tag == "BZh":
-                    out_name += '.bz2'
                     print("-> Compression method: bzip2")
+                    out_name += '.bz2'
                 else:
                     print("-> Compression method: UNKNOWN")
             else:
@@ -306,7 +322,7 @@ if __name__ == '__main__':
     parser_unpack = subparsers.add_parser('unpack', help='unpack the firmware')
     parser_unpack.add_argument('input_file')
     parser_unpack.add_argument('--prefix',
-        help="prefix for unpacked files (default: <basename>_)",
+        help="path for unpacked files (default: <filename>.unpacked)",
         default=None)
     parser_unpack.add_argument('--dry-run',
         help="don't actually do anything, just print",
