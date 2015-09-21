@@ -265,7 +265,7 @@ def do_unpack(args):
                 out.write("('%s', 0x%08XL, 0x%08XL, %d, %d),\n" % (mme.name, mme.address, mme.length, mme.type1, mme.type2))
             out.write("]\n")
     if romio_header.mmap_addr + mmt_size == mmh.user_start:
-        user = fp.read(mmh.user_end - mmh.user_start)
+        user = fp.read(mmh.user_end - mmh.user_start + 1)
         if not args.dry_run:
             out_name = out_prefix + '/.user'
             print("Writing %d bytes of $USER data to '%s'" % (len(user), out_name))
