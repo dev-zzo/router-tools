@@ -63,6 +63,8 @@ Specifically, the following identifying strings were found:
     ZyXEL P-2602HWL-D3A
     ZyXEL P-2602HW-61
     ZyXEL P-660HN-T3A, P-660HW-D1, P-660HW-T1
+    ZyXEL P-662H, P-662HW
+    ZyXEL P-791R v1 and v2
 - ThreadX MIPS32_M14K/GNU Version G5.5.5.0 SN: 3461-183-0501
     TP-LINK TD-8816 V8
 
@@ -315,14 +317,14 @@ def do_unpack(args):
                     tag = fp.read(3)
                     if tag == "]\0\0":
                         print("-> Compression method: LZMA (3 zeros prepended)")
-                        out_name += '.7z'
+                        out_name += '.lzma'
                         fp.seek(-3, 1)
                     else:
                         print("-> Compression method: UNKNOWN")
                         fp.seek(-6, 1)
                 elif tag == "]\0\0":
                     print("-> Compression method: LZMA")
-                    out_name += '.7z'
+                    out_name += '.lzma'
                     fp.seek(-3, 1)
                 elif tag == "BZh":
                     print("-> Compression method: bzip2")
