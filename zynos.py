@@ -97,7 +97,7 @@ class RomIoHeader(struct.Struct):
             self.mmap_addr = 0L
     def __str__(self):
         lines = []
-        lines.append("  Type: %02X"% self.type)
+        lines.append("  Type: %02X" % self.type)
         lines.append("  Loading address: %08X" % self.load_addr)
         lines.append("  Memmap address: %08X" % self.mmap_addr)
         lines.append("  Flags: %02X" % self.flags)
@@ -306,44 +306,62 @@ def do_unpack(args):
 
         out_name = out_prefix + '/' + mme.name
 
-        try:
+        if mme.type1 == 1:
+            # ROMIMG: raw image
+            print("-> Raw data.")
+            fp.seek(offset)
+            data_length = mme.length
+            data = fp.read(data_length)
+        elif mme.type1 == 4:
+            # ROMBIN: (compressed) image with ROMIO header
             fp.seek(offset)
             sh = RomIoHeader(fp.read(0x30))
             print("-> ZyNOS ROMIO header found, version string: %s." % sh.version.strip("\0"))
             if sh.flags & 0x80:
                 print("-> Data is compressed, compressed/original length: %08X/%08X." % (sh.comp_length, sh.orig_length))
-                data_length = sh.comp_length
                 tag = fp.read(3)
                 if tag == "\0\0\0":
                     # Some firmware requires 3 zero bytes before actual LZMA data...
                     tag = fp.read(3)
                     if tag == "]\0\0":
                         print("-> Compression method: LZMA (3 zeros prepended)")
-                        out_name += '.lzma'
+                        ext = '.lzma'
                         fp.seek(-3, 1)
                     else:
                         print("-> Compression method: UNKNOWN")
+                        ext = ''
                         fp.seek(-6, 1)
                 elif tag == "]\0\0":
                     print("-> Compression method: LZMA")
-                    out_name += '.lzma'
+                    ext = '.lzma'
                     fp.seek(-3, 1)
                 elif tag == "BZh":
                     print("-> Compression method: bzip2")
-                    out_name += '.bz2'
+                    ext = '.bz2'
                     fp.seek(-3, 1)
                 else:
                     print("-> Compression method: UNKNOWN")
+                    ext = ''
                     fp.seek(-3, 1)
+
+                if not args.dry_run:
+                    if ext:
+                        data = fp.read(sh.comp_length)
+                        out_fp = open(out_name + ext, 'wb')
+                        out_fp.write(data)
+                        out_fp.close()
+                
+                data_length = sh.comp_length + 0x30
             else:
                 print("-> Data is not compressed, length: %08X." % sh.orig_length)
-                data_length = sh.orig_length
-        except ValueError:
+                data_length = sh.orig_length + 0x30
             fp.seek(offset)
-            data_length = mme.length
-            print("-> Raw data.")
+            data = fp.read(data_length)
+            out_name += '.rom'
+        else:
+            # Everything else:
+            continue
 
-        data = fp.read(data_length)
         if len(data) != data_length:
             print("-> NOTE: not all data is in the image.")
         if not args.dry_run:
@@ -353,10 +371,148 @@ def do_unpack(args):
             out_fp.close()
         else:
             print("-> Would write %d bytes to '%s'." % (data_length, out_name))
+    return
+#
+def read_map(map_path):
+    with open(map_path, 'r') as fp:
+        mmt_source = eval(fp.read())
+    mmt = []
+    for x in mmt_source:
+        y = MemoryMapEntry()
+        y.name, y.address, y.length, y.type1, y.type2 = x
+        mmt.append(y)
+    return mmt
+#
+def read_comp(comp_path):
+    try:
+        with open(comp_path, 'r') as fp:
+            return eval(fp.read())
+    except IOError:
+        return {}
+#
+def pad_data(data):
+    tail = len(data) & 0x3FF
+    if tail > 0:
+        data += "\0" * (0x400 - tail)
+    return data
 #
 def do_pack(args):
-    print("Currently not implemented, sorry.")
+    print("Reading memory map file.")
+    ram_objects = []
+    rom_objects = []
+    rom_objects_with_data = []
+    mmt_address = None
+    be_rom_address = None
+    be_ram_address = None
+    for x in read_map(os.path.join(args.input_dir, '.map')):
+        if x.type1 & 0x80:
+            ram_objects.append(x)
+        else:
+            rom_objects.append(x)
+        if x.type1 == 7:
+            mmt_address = x.address
+        elif x.name == 'BootExt':
+            if x.type1 == 1:
+                be_rom_address = x.address
+                image_base = be_rom_address - 0x30
+            else:
+                be_ram_address = x.address
+        if be_rom_address is not None and x.address >= be_rom_address:
+            rom_objects_with_data.append(x)
+    if mmt_address is None:
+        print("Could not find memory map table address in that file.")
+        return
+    if be_rom_address is None:
+        print("Could not find boot extension address in ROM in that file.")
+        return
+    if be_ram_address is None:
+        print("Could not find boot extension address in RAM in that file.")
+        return
+    print("Image base address: %08X" % image_base)
+    print("Boot extension address in RAM: %08X" % be_ram_address)
+    print("Boot extension address in ROM: %08X" % be_rom_address)
+    print("Objects in RAM:")
+    for x in ram_objects:
+        print(str(x))
+    print("Objects in ROM:")
+    for x in rom_objects:
+        print(str(x))
+    print('')
+    
+    mmt = []
+    for x in ram_objects:
+        mmt.append(x.pack())
+    for x in rom_objects:
+        mmt.append(x.pack())
+    try:
+        with open(os.path.join(args.input_dir, '.user'), 'rb') as fp:
+            user = fp.read()
+        mmt.append(user)
+    except IOError:
+        user = None
+    mmh = MemoryMapHeader()
+    mmh.count = len(ram_objects) + len(rom_objects)
+    if user:
+        mmh.user_start = mmt_address + (1 + mmh.count) * 0x18
+        mmh.user_end = mmh.user_start + len(user) - 1
+    mmt_data = ''.join(mmt)
+    mmh.checksum = checksum(mmt_data)
+    mmt_data = pad_data(mmh.pack() + mmt_data)
 
+    comp = read_comp(os.path.join(args.input_dir, '.comp'))
+    out_fp = open('ras', 'w+b')
+    out_fp.write("\0" * 0x30)
+    try:
+        for mme in rom_objects_with_data:
+            print("Writing '%s'..." % mme.name)
+            if mme.type1 == 1:
+                # ROMIMG
+                path = os.path.join(args.input_dir, mme.name)
+                try:
+                    print("Trying '%s'..." % path)
+                    fp = open(path, 'rb')
+                except IOError:
+                    print("WARN: Could not open the source object binary, not written")
+                    continue
+                out_fp.seek(mme.address - image_base, 0)
+                out_fp.write(fp.read())
+                fp.close()
+            elif mme.type1 == 4:
+                # ROMBIN
+                path = os.path.join(args.input_dir, mme.name + '.rom')
+                try:
+                    print("Trying '%s'..." % path)
+                    fp = open(path, 'rb')
+                except IOError:
+                    print("WARN: Could not open the source object binary, not written")
+                    continue
+                out_fp.seek(mme.address - image_base, 0)
+                out_fp.write(fp.read())
+                fp.close()
+            elif mme.type1 == 7:
+                # ROMMAP
+                out_fp.write(mmt_data)
+            else:
+                print("Don't know how to write object type %d!" % mme.type1)
+    except:
+        out_fp.close()
+    print("Updating ROMIO header...")
+    hdr = RomIoHeader()
+    hdr.type = 3
+    hdr.flags = 0x40
+    hdr.load_addr = be_ram_address
+    hdr.mmap_addr = mmt_address
+    out_fp.seek(0x30, 0)
+    data = out_fp.read()
+    hdr.orig_length = len(data)
+    hdr.orig_checksum = checksum(data)
+    out_fp.seek(0, 0)
+    out_fp.write(hdr.pack())
+    out_fp.close()
+#
+def do_romio(args):
+    pass
+#
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers()
@@ -374,9 +530,24 @@ if __name__ == '__main__':
     parser_unpack.set_defaults(do=do_unpack)
 
     parser_pack = subparsers.add_parser('pack', help='pack the firmware')
+    parser_pack.add_argument('input_dir')
     parser_pack.set_defaults(do=do_pack)
+
+    parser_romio = subparsers.add_parser('romio', help='make ROMIO file')
+    parser_romio.add_argument('input_file')
+    parser_romio.add_argument('--type',
+        type=int,
+        default=0)
+    parser_romio.add_argument('--flags',
+        type=int,
+        default=0xE0)
+    parser_romio.add_argument('--version',
+        default='')
+    parser_romio.add_argument('--compress',
+        default='')
+    parser_romio.set_defaults(do=do_romio)
     
-    print("ZyNOS firmware tool by dev_zzo, version 0")
+    print("ZyNOS firmware tool by dev_zzo, version 1")
     print('')
 
     args = parser.parse_args()
