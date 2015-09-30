@@ -76,6 +76,22 @@ import argparse
 import os.path
 import sys
 import struct
+import bz2
+
+import subprocess
+def decompress_lzma(data):
+    p = subprocess.Popen(['lzma', 'd', '-si', '-so'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=False)
+    r = p.communicate(data)
+    return r[0]
+def compress_lzma(data):
+    p = subprocess.Popen(['lzma', 'e', '-si', '-so', '-d23'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=False)
+    r = p.communicate(data)
+    return r[0]
+def decompress_bz2(data):
+    return bz2.decompress(data)
+def compress_bz2(data):
+    return bz2.compress(data)
+#
 
 class RomIoHeader(struct.Struct):
     SIGNATURE = 'SIG'
@@ -306,62 +322,58 @@ def do_unpack(args):
 
         out_name = out_prefix + '/' + mme.name
 
-        if mme.type1 == 1:
-            # ROMIMG: raw image
-            print("-> Raw data.")
-            fp.seek(offset)
-            data_length = mme.length
-            data = fp.read(data_length)
-        elif mme.type1 == 4:
+        if mme.type1 == 4:
             # ROMBIN: (compressed) image with ROMIO header
             fp.seek(offset)
             sh = RomIoHeader(fp.read(0x30))
             print("-> ZyNOS ROMIO header found, version string: %s." % sh.version.strip("\0"))
             if sh.flags & 0x80:
                 print("-> Data is compressed, compressed/original length: %08X/%08X." % (sh.comp_length, sh.orig_length))
+                df = None
                 tag = fp.read(3)
                 if tag == "\0\0\0":
                     # Some firmware requires 3 zero bytes before actual LZMA data...
                     tag = fp.read(3)
                     if tag == "]\0\0":
                         print("-> Compression method: LZMA (3 zeros prepended)")
-                        ext = '.lzma'
+                        df = decompress_lzma
                         fp.seek(-3, 1)
                     else:
                         print("-> Compression method: UNKNOWN")
-                        ext = ''
                         fp.seek(-6, 1)
                 elif tag == "]\0\0":
                     print("-> Compression method: LZMA")
-                    ext = '.lzma'
+                    df = decompress_lzma
                     fp.seek(-3, 1)
                 elif tag == "BZh":
                     print("-> Compression method: bzip2")
-                    ext = '.bz2'
+                    df = decompress_bz2
                     fp.seek(-3, 1)
                 else:
                     print("-> Compression method: UNKNOWN")
-                    ext = ''
                     fp.seek(-3, 1)
+                data = fp.read(sh.comp_length)
+                
+                if df:
+                    data = df(data)
 
                 if not args.dry_run:
-                    if ext:
-                        data = fp.read(sh.comp_length)
-                        out_fp = open(out_name + ext, 'wb')
-                        out_fp.write(data)
-                        out_fp.close()
+                    out_fp = open(out_name, 'wb')
+                    out_fp.write(data)
+                    out_fp.close()
                 
                 data_length = sh.comp_length + 0x30
             else:
                 print("-> Data is not compressed, length: %08X." % sh.orig_length)
                 data_length = sh.orig_length + 0x30
-            fp.seek(offset)
-            data = fp.read(data_length)
             out_name += '.rom'
         else:
             # Everything else:
-            continue
+            print("-> Raw data.")
 
+        data_length = mme.length
+        fp.seek(offset)
+        data = fp.read(data_length)
         if len(data) != data_length:
             print("-> NOTE: not all data is in the image.")
         if not args.dry_run:
@@ -511,7 +523,34 @@ def do_pack(args):
     out_fp.close()
 #
 def do_romio(args):
-    pass
+    with open(args.input_file, 'rb') as fp:
+        data = fp.read()
+    hdr = RomIoHeader()
+    hdr.type = args.type
+    hdr.flags = 0x20
+    hdr.orig_length = len(data)
+    hdr.orig_checksum = checksum(data)
+    hdr.version = args.version
+    print("Input length: %08X, checksum: %04X" % (hdr.orig_length, hdr.orig_checksum))
+    if args.compression:
+        hdr.flags |= 0xC0
+        if args.compression == 'lzma' or args.compression == 'lzma0':
+            data = compress_lzma(data)
+            # Fix: splice in the file size
+            data = data[:5] + struct.pack('<Q', hdr.orig_length) + data[13:]
+        elif args.compression == 'bzip2':
+            data = compress_bz2(data)
+        else:
+            print("Unrecognized compression method requested: '%s'" % args.compression)
+            return
+        hdr.comp_length = len(data)
+        hdr.comp_checksum = checksum(data)
+        print("Compressed length: %08X, checksum: %04X" % (hdr.comp_length, hdr.comp_checksum))
+        if args.compression == 'lzma0':
+            data = "\0\0\0" + data
+    with open(args.output, 'wb') as fp:
+        fp.write(hdr.pack())
+        fp.write(data)
 #
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -537,14 +576,16 @@ if __name__ == '__main__':
     parser_romio.add_argument('input_file')
     parser_romio.add_argument('--type',
         type=int,
-        default=0)
+        default=4)
     parser_romio.add_argument('--flags',
         type=int,
-        default=0xE0)
+        default=0x40)
     parser_romio.add_argument('--version',
         default='')
-    parser_romio.add_argument('--compress',
-        default='')
+    parser_romio.add_argument('--output',
+        default='object.rom')
+    parser_romio.add_argument('--compression',
+        default=None)
     parser_romio.set_defaults(do=do_romio)
     
     print("ZyNOS firmware tool by dev_zzo, version 1")
