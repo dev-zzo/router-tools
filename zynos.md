@@ -100,6 +100,7 @@ Apparently, no. At least some firmware versions for inspected xDSL routers conta
   - TP-LINK TD-8816 V1 through V7
   - ZTE ZXV10 W300
   - ZyXEL ES-2024A firmware versions 3.60 through 3.80
+  - ZyXEL ES-3024
   - ZyXEL P-2602HWL-D3A
   - ZyXEL P-2602HW-61
   - ZyXEL P-660HN-T3A, P-660HW-D1, P-660HW-T1
@@ -107,6 +108,7 @@ Apparently, no. At least some firmware versions for inspected xDSL routers conta
   - ZyXEL P-791R v1 and v2
 - `ThreadX ARM9/Green Hills Version G4.0.4.0`
   - ZyXEL ES-2048 firmware versions 3.70 through 3.80
+  - ZyXEL ES-3124 firmware versions 3.50 through 3.80
 - `ThreadX MIPS32_M14K/GNU Version G5.5.5.0 SN: 3461-183-0501`
   - TP-LINK TD-8816 V8
 
