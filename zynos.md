@@ -86,3 +86,24 @@ Object: 'fdata   ' at BFC2B400, size 00002800 (ROMBIN, 18)
 Object: 'RasCode ' at BFC2DC00, size 0004A400 (ROMBIN, 19)
 ```
 
+## Is ZyNOS written from scratch?
+
+Apparently, no. At least some firmware versions for inspected xDSL routers contain ThreadX copyright strings. Namely:
+
+- `ThreadX R3900/Green Hills Version G3.0f.3.0b`
+  - AirLive ARM-201, WT2000ARM
+  - Billion BiPAC 5100, 5102, 5102S, 5200/SRC/SRD, 5210SRF
+  - D-LINK DSL-2640R, DSL-2641R, DSL-2740R
+  - Huawei HG520c, HG530
+  - TP-LINK TD-8816 V1 through V7
+  - ZTE ZXV10 W300
+  - ZyXEL P-2602HWL-D3A
+  - ZyXEL P-2602HW-61
+  - ZyXEL P-660HN-T3A, P-660HW-D1, P-660HW-T1
+  - ZyXEL P-662H, P-662HW
+  - ZyXEL P-791R v1 and v2
+- `ThreadX MIPS32_M14K/GNU Version G5.5.5.0 SN: 3461-183-0501`
+  - TP-LINK TD-8816 V8
+
+Web-based configurator UI is implemented using RomPager, with its versions not correlating with ZyNOS versions. This suggests the configurator is built separately for each product (ES-2024A version 3.70 bundles `RomPager Advanced Version 4.30b3` while P-793H version 3.70 bundles `RomPager/4.51`).
+
