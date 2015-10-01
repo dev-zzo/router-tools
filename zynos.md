@@ -105,6 +105,8 @@ Apparently, no. At least some firmware versions for inspected xDSL routers conta
   - ZyXEL P-660HN-T3A, P-660HW-D1, P-660HW-T1
   - ZyXEL P-662H, P-662HW
   - ZyXEL P-791R v1 and v2
+- `ThreadX ARM9/Green Hills Version G4.0.4.0`
+  - ZyXEL ES-2048 firmware versions 3.70 through 3.80
 - `ThreadX MIPS32_M14K/GNU Version G5.5.5.0 SN: 3461-183-0501`
   - TP-LINK TD-8816 V8
 
