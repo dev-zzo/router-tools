@@ -2,7 +2,7 @@
 
 As no public information is available for many currently available ZyNOS versions, this will document what is known or speculated.
 
-DISCLAIMER: No information herein is stated to be true. Use at your own risk. Information contained herein is for educational or research use only.
+**DISCLAIMER**: No information herein is stated to be true. Use at your own risk. Information contained herein is for educational or research use only. It doesn't make me happy to write this, but that's the world we live in.
 
 ## What is ZyNOS?
 
@@ -38,6 +38,25 @@ Note: Firmware released by ZyXEL has the version identified compiled in _BootExt
 
 ## On firmware structure
 
-Every ZyNOS-running device posesses a ROM chip containing the firmware image. Typically, this chip is mapped into meory space starting at `BFC00000` but that is subject to a specific platform.
+Every ZyNOS-running device posesses a ROM chip containing the firmware image. Typically, this chip is mapped into memory space starting at `BFC00000` (on MIPS-based devices), but that is subject to a specific platform.
 
+The image is divided into sections or _objects_. The mapping of objects to addresses in ROM is achieved via the _memory mapping table_, which itself is stored in ROM. The table stores at least the object's name, starting address, size, and type. Note the table maps both ROM and RAM memory sections, so it is possible to figure out memory configuration of the whole device, not only ROM.
+
+RAM object contents are never contained within update image -- quite obviously.
+
+### Memory mapping and objects
+
+All inspected devices so far contain at least these objects: `MemMapT`, `BootBas`, `BootExt`, `RasCode`, `RomDefa`, `termcap`.
+
+The `MemMapT` object maps the memory mapping table -- its actual location and size in ROM.
+
+The `BootBas` object maps the _BootBase_ code -- the initial program loader for the device. It is not actually contained within the firmware update image, but I have seen a few firmware releases from ZyXEL that contain _BootBase_ update in a separate file. Apart from boot code, _BootBase_ contains vendor and model names. _BootBase_ is rather small, typically 16K, but then, it does not need to do much except loading stage 2.
+
+The `BootExt` object maps the _BootExtension_ code -- stage 2 program loader. It also contains rudimentary debugging facilities allowing to recover the device in case of e.g. problems with configuration. _BootExtension_ is responsible to load actual ZyNOS code.
+
+The `RasCode` object contains the OS image -- the final stage.
+
+The `RomDefa` object contains ROMFILE with default configuration settings. 
+
+The `termcap` object contains what looks like, well, termcap description. I am not sure this is _actually_ used anywhere in code.
 
