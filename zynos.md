@@ -36,6 +36,8 @@ It is worthy to take notes on firmware versioning schema adopted by ZyXEL (albei
 
 Note: Firmware released by ZyXEL has the version identified compiled in _BootExtension_.
 
+Note: The same versioning schema is used for non-ZyNOS based products as well (for example, Linux-based devices). So jugding by version number only it is not possible to tell whether firmware is based on ZyNOS or not.
+
 ## On firmware structure
 
 Every ZyNOS-running device posesses a ROM chip containing the firmware image. Typically, this chip is mapped into memory space starting at `BFC00000` (on MIPS-based devices), but that is subject to a specific platform.
