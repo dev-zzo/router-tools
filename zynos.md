@@ -97,6 +97,7 @@ Apparently, no. At least some firmware versions for inspected xDSL routers conta
   - Huawei HG520c, HG530
   - TP-LINK TD-8816 V1 through V7
   - ZTE ZXV10 W300
+  - ZyXEL ES-2024A firmware versions 3.60 through 3.80
   - ZyXEL P-2602HWL-D3A
   - ZyXEL P-2602HW-61
   - ZyXEL P-660HN-T3A, P-660HW-D1, P-660HW-T1
