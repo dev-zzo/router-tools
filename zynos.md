@@ -48,15 +48,41 @@ RAM object contents are never contained within update image -- quite obviously.
 
 All inspected devices so far contain at least these objects: `MemMapT`, `BootBas`, `BootExt`, `RasCode`, `RomDefa`, `termcap`.
 
-The `MemMapT` object maps the memory mapping table -- its actual location and size in ROM.
+* The `MemMapT` object maps the memory mapping table -- its actual location and size in ROM.
+* The `BootBas` object maps the _BootBase_ code -- the initial program loader for the device. It is not actually contained within the firmware update image, but I have seen a few firmware releases from ZyXEL that contain _BootBase_ update in a separate file. Apart from boot code, _BootBase_ contains vendor and model names. _BootBase_ is rather small, typically 16K, but then, it does not need to do much except loading stage 2.
+* The `BootExt` object maps the _BootExtension_ code -- stage 2 program loader. It also contains rudimentary debugging facilities allowing to recover the device in case of e.g. problems with configuration. _BootExtension_ is responsible to load actual ZyNOS code.
+* The `RasCode` object contains the OS image (named RAS -- acronym?) -- the final stage.
+* The `RomDefa` object contains ROMFILE with default configuration settings. 
+* The `termcap` object contains what looks like, well, termcap description. I am not sure this is _actually_ used anywhere in code.
 
-The `BootBas` object maps the _BootBase_ code -- the initial program loader for the device. It is not actually contained within the firmware update image, but I have seen a few firmware releases from ZyXEL that contain _BootBase_ update in a separate file. Apart from boot code, _BootBase_ contains vendor and model names. _BootBase_ is rather small, typically 16K, but then, it does not need to do much except loading stage 2.
+Objects with unknown contents:
 
-The `BootExt` object maps the _BootExtension_ code -- stage 2 program loader. It also contains rudimentary debugging facilities allowing to recover the device in case of e.g. problems with configuration. _BootExtension_ is responsible to load actual ZyNOS code.
+* `DbgArea`
+* `RomDir2`
 
-The `RasCode` object contains the OS image -- the final stage.
+Depending on the device, the following objects may be present:
 
-The `RomDefa` object contains ROMFILE with default configuration settings. 
+* The `HTPCode` object contains _Hardware Test Program_, which can be loaded via _BootExtension_
 
-The `termcap` object contains what looks like, well, termcap description. I am not sure this is _actually_ used anywhere in code.
+An example memory mapping looks like this:
+
+```
+Object: 'BootExt ' at 80008000, size 00018000 (RAMBOOT, 0)
+Object: 'HTPCode ' at 80020000, size 000E0000 (RAMCODE, 0)
+Object: 'RasCode ' at 80020000, size 00340000 (RAMCODE, 0)
+Object: 'BootBas ' at BFC00000, size 00004000 (ROMIMG, 0)
+Object: 'DbgArea ' at BFC04000, size 00002000 (ROMIMG, 1)
+Object: 'RomDir2 ' at BFC06000, size 00002000 (ROMDIR, 2)
+Object: 'BootExt ' at BFC08030, size 00013FD0 (ROMIMG, 3)
+Object: 'MemMapT ' at BFC1C000, size 00000C00 (ROMMAP, 5)
+Object: 'HTPCode ' at BFC1CC00, size 00008000 (ROMBIN, 4)
+Object: 'termcap ' at BFC24C00, size 00000400 (ROMIMG, 6)
+Object: 'RomDefa ' at BFC25000, size 00002000 (ROMIMG, 7)
+Object: 'LedDefi ' at BFC27000, size 00000400 (ROMIMG, 8)
+Object: 'LogoImg ' at BFC27400, size 00001000 (ROMIMG, 9)
+Object: 'LogoImg2' at BFC28400, size 00001000 (ROMIMG, 16)
+Object: 'StrImag ' at BFC29400, size 00002000 (ROMIMG, 17)
+Object: 'fdata   ' at BFC2B400, size 00002800 (ROMBIN, 18)
+Object: 'RasCode ' at BFC2DC00, size 0004A400 (ROMBIN, 19)
+```
 
