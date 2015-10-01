@@ -6,7 +6,7 @@ As no public information is available for many currently available ZyNOS version
 
 ## What is ZyNOS?
 
-As the [Wikipedia page](https://en.wikipedia.org/wiki/ZyNOS) states: "[it] is a contraction of ZyXEL and Network Operating System (NOS)".
+It is ZyXEL's proprietary OS for network-connected devices. As the [Wikipedia page](https://en.wikipedia.org/wiki/ZyNOS) states: the name "is a contraction of _ZyXEL_ and _Network Operating System_ (NOS)".
 
 ## Which devices have ZyNOS-based firmware?
 
