@@ -7,7 +7,11 @@ written to NAND which is organized as 0x800 bytes data + 0x40 bytes extra.
 Applicable models:
 * P-2612HNU-F1
 * P-2812HNU-F1
+* P-2812HNU-F3 (since 1.00xxx)
 * Feel free to add
+
+NOTES:
+* P-2812HNU-F3 1.00(AAHF.3)C0 didn't have 0x40 bytes at the beginning.
 
 """
 
