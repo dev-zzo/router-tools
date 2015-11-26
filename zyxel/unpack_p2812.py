@@ -2,6 +2,7 @@
 Firmware image unpacker for ZyXEL models:
 * P-2612HNU-F1
 * P-2812HNU-F1
+* P-2812HNU-F3 (1.00+)
 
 The firmware uses Yaffs2 with embedded squashFS.
 
@@ -15,6 +16,7 @@ Layout:
 
 """
 
+import argparse
 import sys
 import os
 import struct
@@ -27,6 +29,7 @@ YAFFS_OBJECT_TYPE_SYMLINK = 2
 YAFFS_OBJECT_TYPE_DIRECTORY = 3
 YAFFS_OBJECT_TYPE_HARDLINK = 4
 YAFFS_OBJECT_TYPE_SPECIAL = 5
+YAFFS_OBJECT_TYPE_MAX = 6
 
 YAFFS_OBJECTID_ROOT = 1
 YAFFS_OBJECTID_LOSTNFOUND = 2
@@ -62,55 +65,26 @@ def yaffs2_obj_unpack(data, endianness='be'):
     }
     return obj
 
-
-def usage():
-    print "Usage: %s <image file>" % (sys.argv[0])
-
-
-try:
-    imgpath = sys.argv[1]
-except IndexError:
-    usage()
-    exit(1)
-
-try:
-    imgfp = open(sys.argv[1])
-except:
-    print "Failed to open the image."
-    exit(2)
-
-
-dry_run = False
-
-# Flash geometry defs. Might change for other devices.
-geometry = {
-    'page_size': 0x840,
-    'data_size': 0x800,
-}
-
-# These taken by the Z-Boot bootloader.
-zboot_pages = 0x40
-
-imgfp.seek(zboot_pages * geometry['page_size'])
-headers = []
-
-while True:
-    #print "at: %08x" % imgfp.tell()
-    page = imgfp.read(geometry['page_size'])
-    if len(page) < geometry['page_size']:
-        break
+def unpack_next(fp, args, headers):
+    page = imgfp.read(args.page_size)
+    if len(page) < args.page_size:
+        return False
 
     # This is BS. Need to figure out a better way, but ATM there's nothing.
     if page[:5] == '<?xml' or page[3:8] == '<?xml':
-        imgfp.seek(-geometry['page_size'], os.SEEK_CUR)
-        break
+        imgfp.seek(-args.page_size, os.SEEK_CUR)
+        return False
 
     header = yaffs2_obj_unpack(page[:0x200])
+    if not (YAFFS_OBJECT_TYPE_UNKNOWN <= header['type'] < YAFFS_OBJECT_TYPE_MAX):
+        print "Invalid object type %08x" % (header['type'])
+        return False
+
     headers.append(header)
     print "type: %d name: '%s' parent: %x" % (header['type'], header['name'], header['parent_obj_id'])
     if header['name'] == '':
         print "(dummy entry)"
-        continue
+        return True
 
     path_chunks = []
     current_id = 0x100 + len(headers) - 1
@@ -122,32 +96,32 @@ while True:
         obj_path = os.path.join(*reversed(path_chunks))
     except IndexError:
         print "Invalid current_id of %x" % (current_id)
-        break
+        return False
 
     if header['type'] == YAFFS_OBJECT_TYPE_FILE:
         print "%s (%d bytes)" % (obj_path, header['file_size_low'])
 
-        if not dry_run:
+        if not args.dry_run:
             outfp = open(obj_path, 'wb')
         size = header['file_size_low']
         while size > 0:
-            page = imgfp.read(geometry['page_size'])
-            if not dry_run:
-                outfp.write(page[:geometry['data_size']])
-            size -= geometry['data_size']
-        if not dry_run:
+            page = imgfp.read(args.page_size)
+            if not args.dry_run:
+                outfp.write(page[:args.data_size])
+            size -= args.data_size
+        if not args.dry_run:
             outfp.close()
 
     elif header['type'] == YAFFS_OBJECT_TYPE_SYMLINK:
         print "%s -> %s" % (obj_path, header['alias'])
 
-        if not dry_run:
+        if not args.dry_run:
             os.symlink(header['alias'], obj_path)
 
     elif header['type'] == YAFFS_OBJECT_TYPE_DIRECTORY:
         print "%s" % (obj_path)
 
-        if not dry_run:
+        if not args.dry_run:
             os.mkdir(obj_path, header['yst_mode'])
 
     elif header['type'] == YAFFS_OBJECT_TYPE_SPECIAL:
@@ -157,7 +131,7 @@ while True:
 
         # If cannot create the device -- ignore it.
         try:
-            if not dry_run:
+            if not args.dry_run:
                 os.mknod(obj_path, header['yst_mode'], os.makedev(major, minor))
         except OSError:
             pass
@@ -166,3 +140,41 @@ while True:
     else:
         print "%s (not handled, dumping)" % (obj_path)
         print repr(header)
+    return True
+
+def num(x):
+    return int(x, 0)
+
+if __name__ == '__main__':
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('image_path',
+        help='path to an image file to handle')
+    parser.add_argument('--dry-run',
+        action='store_true',
+        help='do not write anything')
+    parser.add_argument('--page-size',
+        dest='page_size',
+        type=num,
+        default=0x840,
+        help='flash page size, in hex')
+    parser.add_argument('--data-size',
+        dest='data_size',
+        type=num,
+        default=0x800,
+        help='flash data size, in hex')
+    parser.add_argument('--boot-pages',
+        dest='boot_pages',
+        type=num,
+        default=0x40,
+        help='number of pages taken by zboot')
+    args = parser.parse_args()
+
+    imgfp = open(args.image_path)
+    imgfp.seek(args.boot_pages * args.page_size)
+    headers = []
+
+    while unpack_next(imgfp, args, headers):
+        pass
+    print "Done."
+# EOF
