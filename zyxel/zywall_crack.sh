@@ -3,6 +3,9 @@
 # Automatize cracking of ZyWALL update passwords
 # Uses InfoZip 2.32
 
+# Quick path:
+# ZyWALL USG 20 330BDQ7C0: key0=32fc995b, key1=df28965e, key2=8a8dae5b
+
 ZIP232=~/zip232/zip
 PKCRACK=~/pkcrack-1.2.2/src/pkcrack
 PKEXTRACT=~/pkcrack-1.2.2/src/extract
