@@ -10,7 +10,7 @@ import lzs
 
 def process_spt(fp):
     magic, h1, h2, h3 = struct.unpack('>IHHI', fp.read(12))
-    if header[0] != 0xCEEDDBDBL:
+    if magic != 0xCEEDDBDBL:
         print "Magic number doesn't match."
         return
     ofp = open('spt.dat', 'wb')
