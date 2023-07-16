@@ -15,11 +15,11 @@ import bz2
 
 import subprocess
 def decompress_lzma(data):
-    p = subprocess.Popen(['lzma', 'd'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=False)
+    p = subprocess.Popen(['lzma', '-d'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=False)
     r = p.communicate(data)
     return r[0]
 def compress_lzma(data):
-    p = subprocess.Popen(['lzma', 'e', '-d23'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=False)
+    p = subprocess.Popen(['lzma', '-e', '-d23'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=False)
     r = p.communicate(data)
     return r[0]
 def decompress_bz2(data):
